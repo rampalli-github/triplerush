@@ -36,16 +36,17 @@ import com.signalcollect.triplerush.sparql.Sparql
 import com.signalcollect.triplerush.sparql.TripleRushGraph
 import collection.JavaConversions._
 import com.signalcollect.triplerush.loading.TripleIterator
+import scala.concurrent.duration.Duration
 
 object Lubm {
 
-  def load(qe: TripleRush) {
+  def load(qe: TripleRush, toId: Int = 14) {
     println("Loading LUBM1 ... ")
-    for (fileNumber <- 0 to 14) {
+    for (fileNumber <- (0 to toId).par) {
       val resource = s"university0_$fileNumber.nt"
       val tripleStream = getClass.getResourceAsStream(resource)
       println(s"Loading file $resource ...")
-      qe.addTriples(TripleIterator(tripleStream, Lang.NTRIPLES))
+      qe.addTriples(TripleIterator(tripleStream))
       println(s"Done loading $resource.")
     }
     println("Finished loading LUBM1.")
@@ -264,6 +265,7 @@ class GroundTruthSpec extends FlatSpec with Matchers with BeforeAndAfterAll {
 
   override def afterAll {
     tr.shutdown
+    Await.result(tr.graph.system.terminate(), Duration.Inf)
   }
 
   def executeOnQueryEngine(q: String): List[Bindings] = {

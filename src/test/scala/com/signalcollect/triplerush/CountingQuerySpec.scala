@@ -36,8 +36,8 @@ class CountingQuerySpec extends FlatSpec with UnitFixture with Checkers {
     val triples = Set(TriplePattern(1, 2, 3))
     val query = List(TriplePattern(-1, 4, -1))
     val trCount = TestHelper.count(tr, triples, query)
-    val trResults = TestHelper.execute(tr, Set(), query)
-    assert(trResults.size === trCount)
+    val trResults = TestHelper.execute(tr, Set(), query).size
+    assert(trResults === trCount)
   }
 
   it should "correctly answer a query for a specific pattern that exists" in new TestStore {

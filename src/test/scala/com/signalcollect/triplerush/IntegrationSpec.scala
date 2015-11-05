@@ -36,25 +36,19 @@ class IntegrationSpec extends FlatSpec with UnitFixture with Checkers with Scala
   implicit lazy val arbQuery = Arbitrary(queryPatterns)
 
   "TripleRush" should "correctly answer a query for data that is not in the store" in new TestStore {
-    println(s"1 $tr")
     val trResults = TestHelper.execute(
       tr,
       Set(TriplePattern(1, 2, 3)),
       List(TriplePattern(-1, 4, -1)))
-    println("2")
     assert(Set[Map[Int, Int]]() === trResults)
-    println("woot?")
   }
 
   it should "correctly answer a query for a specific pattern that exists" in new TestStore {
-    println(s"1 $tr")
     val trResults = TestHelper.execute(
       tr,
       Set(TriplePattern(1, 2, 3)),
       List(TriplePattern(1, 2, 3)))
-    println("2")
     assert(Set[Map[Int, Int]](Map()) === trResults)
-    println("woot?")
   }
 
   it should "correctly answer a query for a specific pattern that does not exist" in new TestStore {
@@ -137,53 +131,13 @@ class IntegrationSpec extends FlatSpec with UnitFixture with Checkers with Scala
     }
   }
 
-  it should "correctly answer random queries with basic graph patterns" in new NoArg {
-    check(
-      Prop.forAllNoShrink(tripleSet, queryPatterns) {
-        (triples: Set[TriplePattern], query: List[TriplePattern]) =>
-          val jena = new Jena()
-          val tr = TestStore.instantiateUniqueStore()
-          try {
-            val jenaResults = TestHelper.execute(jena, triples, query)
-            val trResults = TestHelper.execute(tr, triples, query)
-            assert(jenaResults === trResults, s"Jena results $jenaResults did not equal our results $trResults.")
-            jenaResults === trResults
-          } finally {
-            jena.shutdown()
-            tr.shutdown()
-          }
-      }, minSuccessful(10))
-  }
-
-  "ResultIteratorQueries" should "correctly answer random queries with basic graph patterns" in new NoArg {
-    check(
-      Prop.forAllNoShrink(tripleSet, queryPatterns) {
-        (triples: Set[TriplePattern], query: List[TriplePattern]) =>
-          val jena = new Jena()
-          val tr = TestStore.instantiateUniqueStore()
-          try {
-            val jenaResults = TestHelper.execute(jena, triples, query)
-            TestHelper.prepareStore(tr, triples)
-            val resultIterator = tr.resultIteratorForQuery(query)
-            val trResults = TestHelper.resultsToBindings(resultIterator)
-            assert(jenaResults === trResults, s"Jena results $jenaResults did not equal our results $trResults.")
-            jenaResults === trResults
-          } finally {
-            jena.shutdown()
-            tr.shutdown()
-          }
-      }, minSuccessful(20))
-  }
-
 }
 
 object TestHelper {
 
   def prepareStore(qe: QueryEngine,
                    triples: Set[TriplePattern]) {
-    for (triple <- triples) {
-      qe.addEncodedTriple(triple.s, triple.p, triple.o)
-    }
+    qe.addTriplePatterns(triples.iterator, 60.seconds)
   }
 
   def count(tr: TripleRush,
@@ -215,86 +169,4 @@ object TestHelper {
     val bindings = resultsToBindings(results)
     bindings
   }
-}
-
-object TripleGenerators {
-  val maxId = 25
-
-  // Smaller ids are more frequent.
-  lazy val frequencies = (1 to maxId) map (id => (maxId + 10 - id, const(id)))
-  lazy val smallId = frequency(frequencies: _*)
-
-  lazy val predicates = Gen.oneOf(23, 24, 25)
-
-  lazy val x = -1
-  lazy val y = -2
-  lazy val z = -3
-  lazy val a = -4
-  lazy val b = -5
-  lazy val c = -6
-
-  val variableFrequencies = List((20, x), (5, y), (1, z), (1, a), (1, b), (1, c))
-
-  // Takes a list of (frequency, value) tuples and turns the values into generators.
-  def frequenciesToGenerator[G](f: List[(Int, G)]): List[(Int, Gen[G])] = {
-    f.map { t: (Int, G) => ((t._1, const(t._2))) }
-  }
-
-  // Different frequencies for different variables.
-  lazy val variable = {
-    val varGenerators = frequenciesToGenerator(variableFrequencies)
-    frequency(varGenerators: _*)
-  }
-
-  // Returns a variable, but not any in vs.
-  def variableWithout(vs: Int*) = {
-    val vSet = vs.toSet
-    val filteredVars = frequenciesToGenerator(variableFrequencies.filter {
-      t => !vs.contains(t._2)
-    })
-    frequency(filteredVars: _*)
-  }
-
-  lazy val genTriple = for {
-    s <- smallId
-    p <- predicates
-    o <- smallId
-  } yield TriplePattern(s, p, o)
-
-  lazy val genTriples = containerOfN[List, TriplePattern](100, genTriple)
-  lazy val tripleSet = genTriples map (_.toSet)
-
-  lazy val genQueryPattern: Gen[TriplePattern] = {
-    for {
-      s <- frequency((2, variable), (1, smallId))
-      // Only seldomly add variables in predicate position, expecially if the subject is a variable.
-      p <- if (s < 0) {
-        // Only seldomly have the same variable multiple times in a pattern.
-        frequency((5, variableWithout(s)), (100, predicates)) //(1, variable),
-      } else {
-        frequency((1, variable), (5, predicates))
-      }
-      o <- if (s < 0 && p < 0) {
-        frequency((5, variableWithout(s, p)), (1, variable), (1, smallId))
-      } else if (s < 0) {
-        // Try not having the same variable multiple times in a pattern too often.
-        frequency((5, variableWithout(s)), (1, variable), (2, smallId))
-      } else if (p < 0) {
-        // Try not having the same variable multiple times in a pattern too often.
-        frequency((5, variableWithout(p)), (1, variable), (2, smallId))
-      } else {
-        // No variables in pattern yet, need one.
-        variable
-      }
-    } yield TriplePattern(s, p, o)
-  }
-
-  lazy val queryPatterns: Gen[List[TriplePattern]] = {
-    for {
-      p <- Arbitrary(genQueryPattern).arbitrary
-      // Bias towards shorter pattern lists.
-      patternList <- frequency((3, Nil), (2, queryPatterns))
-    } yield (p :: patternList)
-  }
-
 }

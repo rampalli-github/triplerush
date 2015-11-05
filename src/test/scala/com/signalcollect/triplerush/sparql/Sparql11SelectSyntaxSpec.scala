@@ -29,7 +29,10 @@ import org.scalatest.{ BeforeAndAfter, Finders, FlatSpec, Matchers }
 import org.scalatest.exceptions.TestFailedException
 import com.signalcollect.triplerush.TripleRush
 import com.signalcollect.triplerush.TestStore
-import com.signalcollect.triplerush.Conversions.filePathToTripleIterator
+import com.signalcollect.triplerush.ConvenienceOperations
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+import org.apache.jena.riot.RDFDataMgr
 
 /**
  * Uses w3c test files to run SELECT syntax tests against Sparql 1.1 spec*
@@ -67,12 +70,13 @@ class Sparql11SelectSyntaxSpec extends FlatSpec with Matchers with BeforeAndAfte
   after {
     FileUtils.deleteDirectory(new File(tmpDir.toString))
     tr.shutdown()
+    Await.result(tr.graph.system.terminate(), Duration.Inf)
   }
 
   "TripleRush" should "pass SELECT Sparql-1.1 syntax tests" in {
     val manifestFile = "testcases-sparql-1.1-w3c/manifest-all.ttl"
     //Load main manifest.
-    tr.loadFromIterator(tmpDir.toString + File.separator + manifestFile)
+    RDFDataMgr.read(model, tmpDir.toString + File.separator + manifestFile)
     //Retrieve sub-manifests
     val subManifestQuery =
       """|PREFIX rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -91,7 +95,7 @@ class Sparql11SelectSyntaxSpec extends FlatSpec with Matchers with BeforeAndAfte
     subManifests.map {
       subManifest =>
         val subManifestFile = subManifest.replace("file://", "")
-        tr.loadFromIterator(subManifestFile)
+        RDFDataMgr.read(model, subManifestFile)
     }
     //Retrieve location of query to run and type (whether it could parse or not).
     val query =

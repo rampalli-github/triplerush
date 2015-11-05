@@ -20,31 +20,24 @@
 
 package com.signalcollect.triplerush
 
-import java.io.InputStream
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.atomic.AtomicBoolean
-import com.signalcollect.configuration.{ ActorSystemRegistry, ExecutionMode }
-import com.signalcollect.factory.scheduler.Throughput
-import com.signalcollect.interfaces._
-import com.signalcollect.nodeprovisioning.cluster.ClusterNodeProvisioner
+import scala.concurrent.{ Await, Future, Promise }
+import scala.concurrent.duration.{ Duration, DurationInt }
+import com.signalcollect.{ ExecutionConfiguration, GraphBuilder }
+import com.signalcollect.configuration.ExecutionMode
+import com.signalcollect.interfaces.MapperFactory
 import com.signalcollect.triplerush.dictionary._
 import com.signalcollect.triplerush.handlers._
 import com.signalcollect.triplerush.loading._
 import com.signalcollect.triplerush.mapper._
-import com.signalcollect.triplerush.sparql._
+import com.signalcollect.triplerush.sparql.VariableEncoding
 import com.signalcollect.triplerush.util._
-import com.signalcollect.triplerush.vertices._
+import com.signalcollect.triplerush.vertices.RootIndex
+import com.signalcollect.triplerush.vertices.blocking.TripleAdditionSynchronizationVertex
 import com.signalcollect.triplerush.vertices.query._
-import com.signalcollect.{ ExecutionConfiguration, GraphBuilder }
-import com.typesafe.config.{ Config, ConfigFactory }
-import org.apache.jena.graph.{ Triple => JenaTriple }
-import org.apache.jena.riot.Lang
-import scala.concurrent.duration.DurationInt
-import scala.concurrent.{ Await, Future, Promise }
-import scala.reflect.ManifestFactory
-import com.signalcollect.nodeprovisioning.NodeProvisioner
-import scala.concurrent.duration.Duration
-import java.util.concurrent.TimeUnit
+import com.typesafe.config._
+import akka.cluster.Cluster
+import scala.util.Success
+import scala.util.Failure
 
 /**
  * Global accessor for the console visualization.
@@ -55,7 +48,7 @@ object TrGlobal {
 
 object TripleRush {
 
-  val defaultBlockingOperationTimeout: Duration = 1.hour
+  val defaultBlockingOperationTimeout: Duration = 1.hours
 
   def apply(graphBuilder: GraphBuilder[Long, Any] = new GraphBuilder[Long, Any](),
             dictionary: RdfDictionary = new HashDictionary(),
@@ -68,10 +61,6 @@ object TripleRush {
   }
 }
 
-/**
- * `fastStart`: Faster startup time, might delay first query execution times and
- * allows to skip calling `prepareExecution`.
- */
 class TripleRush(
     val graphBuilder: GraphBuilder[Long, Any],
     val dictionary: RdfDictionary,
@@ -81,8 +70,13 @@ class TripleRush(
     kryoRegistrations: List[String]) extends QueryEngine with BlockingOperations with ConvenienceOperations {
   import TripleRush._
 
+  // Begin initialization ===========
   TrGlobal.dictionary = Some(dictionary)
-
+  private[this] val scConfig = graphBuilder.config
+  val numberOfNodes = {
+    scConfig.preallocatedNodes.map(_.size).getOrElse(scConfig.nodeProvisioner.numberOfNodes)
+  }
+  val actorNamePrefix = scConfig.actorNamePrefix
   val graph = graphBuilder.
     withConsole(console).
     withKryoInitializer("com.signalcollect.triplerush.serialization.TripleRushKryoInit").
@@ -91,12 +85,11 @@ class TripleRush(
     withUndeliverableSignalHandlerFactory(TripleRushUndeliverableSignalHandlerFactory).
     withEdgeAddedToNonExistentVertexHandlerFactory(TripleRushEdgeAddedToNonExistentVertexHandlerFactory).
     withMapperFactory(
-      tripleMapperFactory.getOrElse(
-        if (graphBuilder.config.preallocatedNodes.isEmpty && graphBuilder.config.nodeProvisioner.numberOfNodes == 1) {
-          SingleNodeTripleMapperFactory
-        } else {
-          DistributedTripleMapperFactory
-        })).
+      if (numberOfNodes > 1) {
+        DistributedTripleMapperFactory
+      } else {
+        SingleNodeTripleMapperFactory
+      }).
       withStorageFactory(TripleRushStorage).
       withThrottlingEnabled(false).
       withThrottlingDuringLoadingEnabled(true).
@@ -104,34 +97,40 @@ class TripleRush(
       withBlockingGraphModificationsSupport(false).
       withStatsReportingInterval(500).
       withEagerIdleDetection(false).build
-
-  implicit private[this] val executionContext = graph.system.dispatcher
-
-  initialize()
-
-  def initialize(): Unit = {
-    graph.addVertex(new RootIndex)
-    graph.execute(ExecutionConfiguration().withExecutionMode(ExecutionMode.ContinuousAsynchronous))
+  private[this] val system = graph.system
+  private[this] val cluster = Cluster(system)
+  val log = system.log
+  private[this] val noOperationsWhenShutdownMessage = "TripleRush has shut down, cannot execute this operation."
+  private[this] var _isShutdown = false
+  cluster.registerOnMemberRemoved {
+    if (!_isShutdown) {
+      val msg = "Cluster unexpectedly lost a member, TripleRush can no longer operate and is shutting down."
+      println(msg)
+      log.error(new Exception(msg), msg)
+      shutdown()
+    }
   }
+  private[this] val tripleRushShutdownPromise: Promise[Nothing] = Promise[Nothing]()
+  protected val tripleRushShutdown: Future[Nothing] = tripleRushShutdownPromise.future // Future is failed when TripleRush shuts down.
+  graph.addVertex(new RootIndex)
+  graph.execute(ExecutionConfiguration().withExecutionMode(ExecutionMode.ContinuousAsynchronous))
+  // End initialization =============
 
-  def asyncLoadFromIterator(
-    iterator: Iterator[JenaTriple],
-    placementHint: Option[Long] = Some(OperationIds.embedInLong(OperationIds.nextId))): Unit = {
-    val loader = new DataLoader(iterator, dictionary)
-    graph.loadGraph(loader, placementHint)
-  }
+  def isShutdown = _isShutdown
 
   def asyncAddTriplePatterns(i: Iterator[TriplePattern]): Future[Unit] = {
+    assert(!_isShutdown, noOperationsWhenShutdownMessage)
     val promise = Promise[Unit]()
-    val vertex = new BlockingTripleAdditionsVertex(i, promise)
+    val vertex = new TripleAdditionSynchronizationVertex(i, promise)
     graph.addVertex(vertex)
     promise.future
   }
 
   def asyncAddEncodedTriple(sId: Int, pId: Int, oId: Int): Future[Unit] = {
+    assert(!_isShutdown, noOperationsWhenShutdownMessage)
     assert(sId > 0 && pId > 0 && oId > 0)
     val promise = Promise[Unit]()
-    val vertex = new BlockingTripleAdditionsVertex(Some(TriplePattern(sId, pId, oId)).iterator, promise)
+    val vertex = new TripleAdditionSynchronizationVertex(Some(TriplePattern(sId, pId, oId)).iterator, promise)
     graph.addVertex(vertex)
     promise.future
   }
@@ -139,6 +138,7 @@ class TripleRush(
   def asyncCount(
     q: Seq[TriplePattern],
     tickets: Long = Long.MaxValue): Future[Option[Long]] = {
+    assert(!_isShutdown, noOperationsWhenShutdownMessage)
     // Efficient counting query.
     val resultCountPromise = Promise[Option[Long]]()
     val v = new ResultCountingQueryVertex(q, tickets, resultCountPromise)
@@ -147,6 +147,7 @@ class TripleRush(
   }
 
   def asyncGetIndexAt(indexId: Long): Future[Array[Int]] = {
+    assert(!_isShutdown, noOperationsWhenShutdownMessage)
     val childIdPromise = Promise[Array[Int]]()
     graph.addVertex(new IndexQueryVertex(indexId, childIdPromise))
     childIdPromise.future
@@ -156,6 +157,7 @@ class TripleRush(
     query: Seq[TriplePattern],
     numberOfSelectVariables: Option[Int] = None,
     tickets: Long = Long.MaxValue): Iterator[Array[Int]] = {
+    assert(!_isShutdown, noOperationsWhenShutdownMessage)
     val selectVariables = numberOfSelectVariables.getOrElse(
       VariableEncoding.requiredVariableBindingsSlots(query))
     val resultIterator = new ResultIterator
@@ -164,19 +166,23 @@ class TripleRush(
     resultIterator
   }
 
-  var isShutDown = false
-  
   def shutdown(): Unit = {
-    isShutDown = true
-    dictionary.close()
-    graph.shutdown
+    if (!_isShutdown) {
+      _isShutdown = true
+      dictionary.close()
+      graph.shutdown()
+      tripleRushShutdownPromise.complete(Failure(
+        new Exception("Operation was not completed, because TripleRush has shut down, possibly due to a cluster node failure.")))
+    }
   }
 
   def edgesPerIndexType: Map[String, Int] = {
+    assert(!_isShutdown, noOperationsWhenShutdownMessage)
     graph.aggregate(new EdgesPerIndexType)
   }
 
   def countVerticesByType: Map[String, Int] = {
+    assert(!_isShutdown, noOperationsWhenShutdownMessage)
     graph.aggregate(new CountVerticesByType)
   }
 

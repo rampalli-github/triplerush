@@ -1,36 +1,53 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 	<parent>
 		<groupId>io.cotiviti</groupId>
 		<artifactId>cotiviti-scala-parent</artifactId>
-		<version>0.1.0-SNAPSHOT</version>
+		<version>0.2.4</version>
 	</parent>
 	<artifactId>triplerush_2.11</artifactId>
 	<groupId>com.signalcollect</groupId>
-	<version>7.0.0-SNAPSHOT</version>
+	<version>8.0.1-SNAPSHOT</version>
 	<packaging>jar</packaging>
 	<name>triplerush</name>
 	<description>A distributed in-memory graph store.</description>
 	<properties>
+		<triplerush.version>${project.version}</triplerush.version>
 		<team.group.id>uzh</team.group.id>
 		<scala.release>7</scala.release>
-		<signalcollect.version>7.0.0-SNAPSHOT</signalcollect.version>
-		<mapdb.version>2.0-beta8</mapdb.version>
+		<signalcollect.version>8.0.0</signalcollect.version>
+		<mapdb.version>2.0-beta10</mapdb.version>
 		<apache.jena.version>3.0.0</apache.jena.version>
+		<nxparser.version>2.2</nxparser.version>
 		<sesame.version>4.0.0-RC1</sesame.version>
 		<scalatest.version>2.2.5</scalatest.version>
-		<scalacheck.version>1.12.4</scalacheck.version>
+		<scalacheck.version>1.12.5</scalacheck.version>
 		<easymock.version>3.3.1</easymock.version>
+		<akka.version>2.4.0</akka.version>
+		<akka.kryo.version>0.3.3</akka.kryo.version>
+		<d3js.version>3.5.6</d3js.version>
+		<introjs.version>1.0.0</introjs.version>
+		<jquery.version>2.1.4</jquery.version>
+		<reconnecting-websocket.version>1.0.0</reconnecting-websocket.version>
+        <git.url>${git.url.base}/triplerush.git</git.url>
+        <git.http.url>${ghe.url.base}/triplerush</git.http.url>
+
 	</properties>
-	<url>${ghe.url.base}/${project.artifactId}</url>
+    <url>${git.http.url}</url>
 	<scm>
 		<connection>scm:git:${git.url}</connection>
-		<url>scm:git:${git.url}</url>
+        <url>${git.http.url}</url>
 		<developerConnection>scm:git:${git.url}</developerConnection>
 		<tag>HEAD</tag>
 	</scm>
+	<distributionManagement>
+		<site>
+			<id>githubsite</id>
+			<name>GitHub Pages</name>
+			<url>${site.target.url}</url>
+		</site>
+	</distributionManagement>
 	<dependencies>
 		<dependency>
 			<groupId>org.scala-lang</groupId>
@@ -58,6 +75,17 @@
 			<groupId>org.apache.jena</groupId>
 			<artifactId>jena-core</artifactId>
 			<scope>compile</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.semanticweb.yars</groupId>
+			<artifactId>nxparser-parsers</artifactId>
+			<version>${nxparser.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.typesafe.akka</groupId>
+			<artifactId>akka-testkit_${scala.minor.version}</artifactId>
+			<version>${akka.version}</version>
+			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.jena</groupId>
@@ -139,7 +167,7 @@
 						<goals>
 							<goal>test</goal>
 						</goals>
-						<configuration></configuration>
+						<configuration />
 					</execution>
 				</executions>
 			</plugin>
@@ -196,11 +224,22 @@
 			<name>Bharath Kumar</name>
 			<url>https://github.com/sunnylbk</url>
 		</developer>
+		<developer>
+			<id>kolarm</id>
+			<name>Marko Kolar</name>
+			<url>https://github.com/kolarm</url>
+		</developer>
+        <developer>
+            <id>mykelalvis</id>
+            <name>Mykel Alvis</name>
+            <organization>Cotiviti</organization>
+            <organizationUrl>http://www.cotiviti.io</organizationUrl>
+            <url>https://github.com/mykelalvis</url>
+            <timezone>America/Chicago</timezone>
+            <roles>
+                <role>release management</role>
+            </roles>
+        </developer>
+
 	</developers>
-	<distributionManagement>
-		<repository>
-			<id>bintray-maven</id>
-			<url>https://bintray.com/pstutz/maven/triplerush/;publish=1</url>
-		</repository>
-	</distributionManagement>
 </project>

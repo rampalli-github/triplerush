@@ -22,32 +22,21 @@ package com.signalcollect.triplerush
 
 import java.net.ServerSocket
 import java.util.concurrent.atomic.AtomicInteger
-
 import scala.annotation.tailrec
 import scala.reflect.runtime.universe
 import scala.util.{ Failure, Success, Try }
-
 import org.scalatest.fixture.NoArg
-
 import com.signalcollect.GraphBuilder
 import com.signalcollect.configuration.Akka
 import com.signalcollect.triplerush.sparql.TripleRushGraph
 import com.typesafe.config.{ Config, ConfigFactory }
-
 import akka.actor.ActorSystem
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 object TestStore {
 
-  private[this] val uniquePrefixTracker = new AtomicInteger(0)
-
-  private[this] val uniqueNameTracker = new AtomicInteger(0)
-
-  def nextUniquePrefix = uniquePrefixTracker.incrementAndGet.toString
-
-  def nextUniqueName = uniqueNameTracker.incrementAndGet.toString
-
   def instantiateUniqueStore(): TripleRush = {
-    val uniquePrefix = nextUniquePrefix
     val graphBuilder = instantiateUniqueGraphBuilder
     TripleRush(graphBuilder = graphBuilder)
   }
@@ -69,7 +58,7 @@ object TestStore {
       loggingLevel = None,
       kryoRegistrations = defaultGraphConfig.kryoRegistrations,
       kryoInitializer = None)
-    val actorSystemName = nextUniqueName
+    val actorSystemName = "TripleRushTestSystem"
     val customAkkaConfig = customClusterConfig(actorSystemName = actorSystemName, seedPort = freePort)
       .withFallback(defaultAkkaConfig)
     ActorSystem(actorSystemName, customAkkaConfig)
@@ -77,7 +66,6 @@ object TestStore {
 
   def instantiateUniqueGraphBuilder(): GraphBuilder[Long, Any] = {
     new GraphBuilder[Long, Any]()
-      .withActorNamePrefix(nextUniquePrefix)
       .withActorSystem(instantiateUniqueActorSystem())
   }
 
@@ -108,6 +96,7 @@ class TestStore(val tr: TripleRush) extends NoArg {
 
   lazy implicit val graph = TripleRushGraph(tr)
   lazy implicit val model = graph.getModel
+  lazy implicit val system = tr.graph.system
 
   def this() = this(TestStore.instantiateUniqueStore())
 
@@ -115,8 +104,7 @@ class TestStore(val tr: TripleRush) extends NoArg {
     model.close()
     graph.close()
     tr.shutdown()
-    tr.graphBuilder.config.actorSystem.get.shutdown()
-    tr.graphBuilder.config.actorSystem.get.awaitTermination()
+    Await.result(tr.graph.system.terminate(), Duration.Inf)
   }
 
   override def apply(): Unit = {

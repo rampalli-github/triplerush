@@ -1,34 +1,45 @@
+/*
+ *  @author Philip Stutz
+ *
+ *  Copyright 2015 Cotiviti
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ */
+
 package com.signalcollect.triplerush.loading
 
-import java.io.File
-import org.scalatest.{ Finders, FlatSpec }
-import org.scalatest.concurrent.ScalaFutures
-import com.signalcollect.triplerush.{ TriplePattern, TripleRush }
-import com.signalcollect.triplerush.dictionary.HashDictionary
 import org.apache.jena.riot.Lang
-import com.signalcollect.triplerush.GroundTruthSpec
+import org.scalatest.FlatSpec
+import org.scalatest.concurrent.ScalaFutures
+import com.signalcollect.triplerush.{ GroundTruthSpec, TestStore, TriplePattern }
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 class BlockingAdditionsSpec extends FlatSpec with ScalaFutures {
 
-  "Blocking additions" should "correctly load triples from a file" in {
-    //fastStart = true, 
-    val tr = TripleRush()
+  "Blocking additions" should "correctly load triples from a file" in  {
+    val tr = TestStore.instantiateUniqueStore()
     try {
-      println("Loading LUBM1 ... ")
       val resource = s"university0_0.nt"
       val tripleStream = classOf[GroundTruthSpec].getResourceAsStream(resource)
-      println(s"Loading file $resource ...")
-      tr.addTriples(TripleIterator(tripleStream, Lang.NTRIPLES))
-      println(s"Done loading $resource.")
-      println("Finished loading LUBM1.")
-      val howMany = 25700
-      println(tr.dictionary)
-      println(tr.resultIteratorForQuery(Seq(TriplePattern(-1, -2, -3))).size)
-      println(tr.countVerticesByType)
-      println(tr.edgesPerIndexType)
+      tr.addTriples(TripleIterator(tripleStream))
+      val expectedCount = 25700
+      val count = tr.resultIteratorForQuery(Seq(TriplePattern(-1, -2, -3))).size
+      assert(count == expectedCount)
     } finally {
       tr.shutdown
+      Await.result(tr.graph.system.terminate(), Duration.Inf)
     }
   }
-
 }
